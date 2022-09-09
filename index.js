@@ -38,7 +38,10 @@ server.post("/participants", async (req,res)=>{
         if(userExists){
             return res.status(409).send("Nome já utilizado");
         }   
-        await db.collection("users").insertOne({name: user.name , lastStatus: Date.now()})
+        await db.collection("users").insertOne({
+            name: user.name ,
+            lastStatus: Date.now()})
+
         await db.collection("message").insertOne({
             from: user.name,
             to: 'Todos',
@@ -56,8 +59,89 @@ server.post("/participants", async (req,res)=>{
 server.get("/participants", async (req,res)=>{
 const list= await db.collection("users").find({}).toArray();
 res.send(list);
+});
+
+server.post("/messages", async (req,res)=>{
+    const {to,text,type}=req.body;
+    const {user}= req.headers;
+    try{
+        const message={
+            from: user,
+            to,
+            text,
+            type,
+            time: dayjs().format("HH:MM:SS")
+        }
+        const validation = messageSchema.validate(message);
+        if(validation.error){
+            return res.sendStatus(422);
+        }
+        const userExists= await db.collection("users").findOne({name: user});
+        if(!userExists){
+            return res.sendStatus(409);
+        }
+        await db.collection("messages").insertOne(message);
+        res.sendStatus(201);
+    }catch(err){
+        res.status(500).send(err.message);
+    }
 })
 
+server.get("/messages", async (req,res)=>{
+    const {user}=req.headers;
+    const limit = Number(req.query.limit); // console.log(limit);
+    try{
+        const allMessages= await db.collection("messages").find({}).toArray();
+        const messagesUser= allMessages.filter(value=> {
+            const messagesPublic= value.type==="message";
+            const messagesToUser= value.from === user || value.to==="Todos"|| value.to===user;
+            return messagesPublic || messagesToUser;
+        })
+
+        res.send(messagesUser.slice(-limit));
+    } catch (err){
+        res.status(422).send(err.message);
+    }
+})
+
+server.post("/status", async (req,res)=>{
+
+    const {user}=req.headers;
+    try{
+        const userExists= await db.collection("users").findOne({name: user  });
+        if(!userExists){
+            return res.sendStatus(404);
+        }
+        await db.collection("users").updateOne({user},{$set: {lastStatus: Date.now}})
+        res.sendStatus(200);
+    }catch(err){
+        res.status(500).send(err.message);
+    }
+})
+
+setInterval(async ()=>{
+    const seconds =Date.now()-(15*1000);
+    console.log(seconds);
+    try{
+        exParticipants = await db.collection("user").find({ lastStatus:{$lte: seconds} }).toArray();
+        if(exParticipants.length > 0 ){
+            const noMessages= exParticipants.map(value=>{
+                return ({
+                from: exParticipants.name,
+                to: 'Todos',
+                text: 'sai da sala...',
+                type: 'status',
+                time: dayjs().format("HH:MM:SS")
+                });
+            })
+            await db.collection("messages").insertMany(noMessages);
+            await db.collection("user").deleteMany({ lastStatus:{$lte: seconds} }).toArray();           
+        }
+    }catch(err){
+        res.status(500).send(err.message);
+    }
+
+},15000)
 
 
 server.listen(5000, ()=>{console.log("escutando 5000")})
